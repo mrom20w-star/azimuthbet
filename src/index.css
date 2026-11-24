@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+.cyber-font {
+  font-family: "Chakra Petch", "Cairo", sans-serif;
+}
+
+.body-font {
+  font-family: "Cairo", sans-serif;
+}
+
+:root {
+  --bg-dark: #030712;
+  --neon-blue: #2563eb;
+  --neon-sky: #0ea5e9;
+  --neon-indigo: #4f46e5;
+  --neon-cyan: #00d4ff;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: #f8fafc;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+
+.glow-orb-blue {
+  filter: blur(110px);
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(circle, #2563eb4d 0%, #0ea5e922 60%, #0000 100%);
+  border-radius: 50%;
+  width: 55vw;
+  height: 55vw;
+  animation: 8s ease-in-out infinite alternate pulseGlow;
+  position: fixed;
+  top: -15%;
+  right: -10%;
+}
+
+.glow-orb-cyan {
+  filter: blur(120px);
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(circle, #00d4ff3d 0%, #3b82f624 60%, #0000 100%);
+  border-radius: 50%;
+  width: 60vw;
+  height: 60vw;
+  animation: 10s ease-in-out infinite alternate-reverse pulseGlow;
+  position: fixed;
+  bottom: -15%;
+  left: -10%;
+}
+
+@keyframes pulseGlow {
+  0% {
+    opacity: 0.7;
+    transform: scale(1) translate(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.18) translate(-25px, 25px);
+  }
+}
+
+.glass-card {
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+  background: #071024e6;
+  border: 1px solid #3b82f659;
+  border-radius: 1.5rem;
+  box-shadow: 0 20px 50px #000000d9, inset 0 1px #ffffff1f;
+}
+
+.glass-input {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  background: #040917f2;
+  border: 1px solid #3b82f666;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-input:focus {
+  border-color: #00d4ff;
+  outline: none;
+  box-shadow: 0 0 25px #00d4ff66, inset 0 0 10px #00d4ff2e;
+}
+
+.btn-blue {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  transition: all 0.3s;
+  box-shadow: 0 0 25px #2563eb80;
+}
+
+.btn-blue:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 35px #3b82f6cc;
+}
+
+.btn-cyan {
+  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  transition: all 0.3s;
+  box-shadow: 0 0 25px #0ea5e973;
+}
+
+.btn-cyan:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 35px #00d4ffbf;
+}
+
+.loader-portal {
+  justify-content: center;
+  align-items: center;
+  width: 210px;
+  height: 210px;
+  display: flex;
+  position: relative;
+}
+
+.loader-ring {
+  border: 3px solid #0000;
+  border-radius: 50%;
+  position: absolute;
+  inset: 0;
+}
+
+.loader-ring-1 {
+  border-top-color: #3b82f6;
+  border-right-color: #3b82f64d;
+  animation: 2s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite spinCW;
+}
+
+.loader-ring-2 {
+  border-bottom-color: #0ea5e9;
+  border-left-color: #0ea5e94d;
+  animation: 2.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite spinCCW;
+  inset: 12px;
+}
+
+.loader-ring-3 {
+  border-top-color: #00d4ff;
+  border-left-color: #00d4ff4d;
+  animation: 1.8s linear infinite spinCW;
+  inset: 24px;
+}
+
+.loader-core-pulse {
+  background: radial-gradient(circle, #2563eb66 0%, #0ea5e933 70%, #0000 100%);
+  border-radius: 50%;
+  animation: 1.5s ease-in-out infinite alternate pulseCore;
+  position: absolute;
+  inset: 36px;
+}
+
+@keyframes pulseCore {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes spinCW {
+  0% {
+    transform: rotate(0);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinCCW {
+  0% {
+    transform: rotate(0);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.radar-sweep {
+  background: conic-gradient(
+    from 0deg,
+    rgba(0, 212, 255, 0.28) 0deg,
+    rgba(37, 99, 235, 0.08) 65deg,
+    transparent 120deg,
+    transparent 360deg
+  );
+  animation: 2.8s linear infinite spinCW;
+}
+
+.multiplier-pop {
+  animation: 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards slotPopIn;
+}
+
+@keyframes slotPopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.65);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #030712;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2563eb;
+  border-radius: 9999px;
+}
