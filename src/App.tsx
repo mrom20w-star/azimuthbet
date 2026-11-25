@@ -675,6 +675,16 @@ export default function App() {
               </button>
             </div>
 
+            <div className="p-3 rounded-xl bg-slate-950/80 border border-blue-500/35 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-slate-200 font-bold">
+                <i className="fa-solid fa-wallet text-cyan-400 text-sm shrink-0" />
+                <span>الحد الأدنى للإيداع لتشغيل السكربت:</span>
+              </div>
+              <span className="cyber-font font-black text-cyan-300 tabular-nums shrink-0">
+                5$ أو 300 ج.م
+              </span>
+            </div>
+
             <div>
               <a
                 href={REGISTER_URL}
@@ -1104,6 +1114,19 @@ export default function App() {
                 و الحسابات المسجّلة بالبرومو كود الخاص بنا لضمان التشغيل الصحيح
                 💯
               </p>
+
+              <div className="p-3 rounded-xl bg-blue-500/10 border border-sky-500/40 flex items-start gap-2.5 text-xs">
+                <i className="fa-solid fa-coins text-cyan-300 text-base mt-0.5 shrink-0" />
+                <p className="font-bold text-sky-200 leading-relaxed">
+                  يشترط عمل إيداع لا يقل عن{" "}
+                  <span className="text-cyan-300 font-black">5 دولار</span> أو{" "}
+                  <span className="text-cyan-300 font-black">
+                    300 جنيه مصري
+                  </span>{" "}
+                  في حسابك على المنصة لضمان تفعيل السكربت والربط التلقائي بشكل
+                  صحيح.
+                </p>
+              </div>
 
               <div className="pt-2 border-t border-slate-800/80 space-y-2">
                 <p className="font-bold text-sky-400 flex items-center gap-1.5">
