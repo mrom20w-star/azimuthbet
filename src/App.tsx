@@ -41,9 +41,10 @@ export default function App() {
   const keyInputRef = useRef<HTMLInputElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
-  // Strict round-sync lock ref: lastShownRound = null
-  const lastShownRoundRef = useRef<number | null>(null);
+  // Strict round-sync refs
   const dbClosedRef = useRef<boolean>(false);
+  const latestServerCurrentRef = useRef<CrashCurrentData | null>(null);
+  const lockedPredictionRef = useRef<LockedPrediction | null>(null);
 
   const [progress, setProgress] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -70,6 +71,7 @@ export default function App() {
   const [liveRoundNumber, setLiveRoundNumber] = useState<number | null>(null);
   const [lockedPrediction, setLockedPrediction] =
     useState<LockedPrediction | null>(null);
+  const [isFetchingRound, setIsFetchingRound] = useState(false);
   const [completedRounds, setCompletedRounds] = useState<CompletedRound[]>([]);
 
   // Blue Particle Background
@@ -168,7 +170,8 @@ export default function App() {
       const closed = rootClosed || enabledClosed || permissionClosed;
       dbClosedRef.current = closed;
       if (closed) {
-        lastShownRoundRef.current = null;
+        lockedPredictionRef.current = null;
+        latestServerCurrentRef.current = null;
         setDbClosed(true);
         setDbErrorMsg(reason || "قاعدة البيانات مغلقة حالياً");
         setLockedPrediction(null);
@@ -202,75 +205,47 @@ export default function App() {
       const crashPoint =
         typeof data.crashPoint === "number" ? data.crashPoint : null;
 
+      if (roundNumber !== null && phase && crashPoint !== null) {
+        latestServerCurrentRef.current = {
+          roundNumber,
+          phase,
+          crashPoint,
+          roundStartedAt: data.roundStartedAt,
+          flightStartedAt: data.flightStartedAt,
+          updatedAt: data.updatedAt,
+        };
+      }
+
       if (phase) setLivePhase(phase);
       if (roundNumber !== null) setLiveRoundNumber(roundNumber);
 
-      // 1) Initial entry: if the platform already has an active or recent round,
-      //    display its prediction immediately on entry without waiting.
+      // When a currently shown round finishes (crashed) or moves to a newer round,
+      // reset the displayed odd back to 0.00x and wait for the user to press "ابدأ الدور".
+      const activeLocked = lockedPredictionRef.current;
       if (
-        lastShownRoundRef.current === null &&
+        activeLocked &&
         roundNumber !== null &&
-        crashPoint !== null &&
-        crashPoint >= 1 &&
-        (phase === "waiting" || phase === "flight" || phase === "crashed")
+        ((phase === "crashed" && roundNumber === activeLocked.roundNumber) ||
+          roundNumber > activeLocked.roundNumber)
       ) {
-        lastShownRoundRef.current = roundNumber;
-        setLockedPrediction({
-          roundNumber,
-          crashPoint,
+        setCompletedRounds((prev) => {
+          if (prev.some((r) => r.roundNumber === activeLocked.roundNumber)) {
+            return prev;
+          }
+          return [
+            {
+              roundNumber: activeLocked.roundNumber,
+              crashPoint: activeLocked.crashPoint,
+            },
+            ...prev.slice(0, 7),
+          ];
         });
-        if (phase === "crashed") {
-          setCompletedRounds((prev) => {
-            if (prev.some((r) => r.roundNumber === roundNumber)) return prev;
-            return [{ roundNumber, crashPoint }, ...prev.slice(0, 7)];
-          });
-        }
-        return;
+        lockedPredictionRef.current = null;
+        setLockedPrediction(null);
       }
-
-      // 2) Subsequent rounds: STRICT RULE
-      //    Only update when phase === "waiting", new larger roundNumber, and crashPoint >= 1.
-      if (
-        phase === "waiting" &&
-        roundNumber !== null &&
-        roundNumber !== lastShownRoundRef.current &&
-        (lastShownRoundRef.current === null ||
-          roundNumber > lastShownRoundRef.current) &&
-        crashPoint !== null &&
-        crashPoint >= 1
-      ) {
-        lastShownRoundRef.current = roundNumber;
-        setLockedPrediction({
-          roundNumber,
-          crashPoint,
-        });
-      } else if (phase === "crashed" && roundNumber !== null) {
-        // Record completed round ONLY if it matches the round we locked & displayed
-        if (roundNumber === lastShownRoundRef.current) {
-          setLockedPrediction((currentLocked) => {
-            if (currentLocked && currentLocked.roundNumber === roundNumber) {
-              setCompletedRounds((prev) => {
-                if (prev.some((r) => r.roundNumber === roundNumber)) {
-                  return prev;
-                }
-                return [
-                  {
-                    roundNumber,
-                    crashPoint: currentLocked.crashPoint,
-                  },
-                  ...prev.slice(0, 7),
-                ];
-              });
-            }
-            return currentLocked;
-          });
-        }
-      }
-      // During "flight" and "crashed", prediction remains completely locked
-      // and no next-round prediction is ever read or shown.
     };
 
-    // Fast initial REST bootstrap for instant readout on entry + root closure check
+    // Initial REST bootstrap to check root closure & cache current state
     const bootstrapFromRest = async () => {
       try {
         const [shallowRes, currentRes] = await Promise.all([
@@ -471,31 +446,131 @@ export default function App() {
     setIsActivated(true);
   };
 
+  const handleStartRound = async () => {
+    if (dbClosedRef.current) {
+      triggerToast("قاعدة البيانات مغلقة حالياً!");
+      return;
+    }
+
+    // If a prediction is already active for the current round, block re-fetch and notify user
+    if (lockedPredictionRef.current !== null) {
+      triggerToast("انتظر الجولة تخلص");
+      return;
+    }
+
+    if (isFetchingRound) return;
+    setIsFetchingRound(true);
+
+    try {
+      const [enabledRes, currentRes] = await Promise.all([
+        fetch(`${CRASH_DB_URL}/crash/enabled.json`, { cache: "no-store" }),
+        fetch(`${CRASH_DB_URL}/crash/current.json`, { cache: "no-store" }),
+      ]);
+
+      if (
+        enabledRes.status === 401 ||
+        enabledRes.status === 403 ||
+        currentRes.status === 401 ||
+        currentRes.status === 403
+      ) {
+        dbClosedRef.current = true;
+        setDbClosed(true);
+        setDbErrorMsg("قاعدة البيانات مغلقة (PERMISSION_DENIED)");
+        triggerToast("قاعدة البيانات مغلقة حالياً");
+        return;
+      }
+
+      if (enabledRes.ok) {
+        const enabledVal = await enabledRes.json();
+        if (enabledVal === false) {
+          dbClosedRef.current = true;
+          setDbClosed(true);
+          setDbErrorMsg("قاعدة البيانات مغلقة حالياً (crash/enabled = false)");
+          triggerToast("قاعدة البيانات مغلقة حالياً");
+          return;
+        }
+      }
+
+      let data: Partial<CrashCurrentData> | null = null;
+      if (currentRes.ok) {
+        const parsed = await currentRes.json();
+        if (parsed === false) {
+          dbClosedRef.current = true;
+          setDbClosed(true);
+          setDbErrorMsg("قاعدة البيانات مغلقة حالياً");
+          triggerToast("قاعدة البيانات مغلقة حالياً");
+          return;
+        }
+        if (parsed && typeof parsed === "object") {
+          data = parsed as Partial<CrashCurrentData>;
+        }
+      }
+
+      if (!data && latestServerCurrentRef.current) {
+        data = latestServerCurrentRef.current;
+      }
+
+      const roundNumber =
+        data && typeof data.roundNumber === "number" ? data.roundNumber : null;
+      const phase =
+        data &&
+        (data.phase === "waiting" ||
+          data.phase === "flight" ||
+          data.phase === "crashed")
+          ? data.phase
+          : null;
+      const crashPoint =
+        data && typeof data.crashPoint === "number" ? data.crashPoint : null;
+
+      if (phase) setLivePhase(phase);
+      if (roundNumber !== null) setLiveRoundNumber(roundNumber);
+
+      if (
+        (phase === "waiting" || phase === "flight") &&
+        roundNumber !== null &&
+        crashPoint !== null &&
+        crashPoint >= 1
+      ) {
+        const nextPrediction = { roundNumber, crashPoint };
+        lockedPredictionRef.current = nextPrediction;
+        setLockedPrediction(nextPrediction);
+        triggerToast(`تم جلب توقع الجولة #${roundNumber} بنجاح ✈️`);
+      } else if (phase === "crashed") {
+        lockedPredictionRef.current = null;
+        setLockedPrediction(null);
+        triggerToast("انتظر الجولة تخلص وتبدأ الجولة الجديدة ثم اضغط ابدأ الدور");
+      } else {
+        triggerToast("لا توجد جولة نشطة حالياً، حاول مرة أخرى بعد لحظة");
+      }
+    } catch {
+      triggerToast("تعذر الاتصال بقاعدة البيانات");
+    } finally {
+      setIsFetchingRound(false);
+    }
+  };
+
   const getStepMessage = () => {
     if (dbClosed) {
       return dbErrorMsg || "قاعدة البيانات مغلقة — التوقعات متوقفة";
     }
     if (!lockedPrediction) {
-      return "جاري جلب التوقع المباشر من النسخة...";
+      return 'اضغط "ابدأ الدور" لجلب توقع الجولة الحالية';
     }
     if (livePhase === "waiting") {
       return `الجولة #${lockedPrediction.roundNumber}: توقع مؤكد قبل الإقلاع ✈️`;
     }
     if (livePhase === "flight") {
-      return `الجولة #${lockedPrediction.roundNumber}: الطائرة في الجو (التوقع مقفل)`;
+      return `الجولة #${lockedPrediction.roundNumber}: الجولة شغالة الآن (انتظر انتهاء الجولة)`;
     }
-    if (livePhase === "crashed") {
-      return `الجولة #${lockedPrediction.roundNumber}: انتهت الجولة — انتظار الجولة الجديدة`;
-    }
-    return "متصل مباشرة بقاعدة البيانات";
+    return `الجولة #${lockedPrediction.roundNumber}: توقع الجولة جاهز ✈️`;
   };
 
   const getStatusBadgeText = () => {
     if (dbClosed) return "قاعدة البيانات مغلقة";
-    if (livePhase === "waiting") return "WAITING · توقع متاح";
-    if (livePhase === "flight") return "FLIGHT · مقفل";
-    if (livePhase === "crashed") return "CRASHED · انتظار";
-    return "متصل بالسيرفر";
+    if (livePhase === "waiting") return "WAITING · جولة متاحة";
+    if (livePhase === "flight") return "FLIGHT · الجولة شغالة";
+    if (livePhase === "crashed") return "CRASHED · انتهت الجولة";
+    return "متصل بالنسخة";
   };
 
   return (
@@ -1015,13 +1090,15 @@ export default function App() {
                       <div className="flex items-center gap-2 text-xs font-mono text-sky-300">
                         <i
                           className={`fa-solid fa-plane-up text-cyan-400 ${
-                            livePhase === "flight" ? "animate-bounce" : ""
+                            livePhase === "flight" && lockedPrediction
+                              ? "animate-bounce"
+                              : ""
                           }`}
                         />
                         <span>
                           {lockedPrediction
                             ? "نقطة الانفجار المؤكدة للجولة"
-                            : "جاري جلب التوقع المباشر..."}
+                            : "جاهز لجلب توقع الجولة"}
                         </span>
                       </div>
 
@@ -1029,29 +1106,55 @@ export default function App() {
                         key={
                           lockedPrediction
                             ? `round-${lockedPrediction.roundNumber}`
-                            : "waiting-next"
+                            : "zero-ready"
                         }
                         className={`cyber-font text-5xl sm:text-6xl font-black tracking-tight tabular-nums ${
                           lockedPrediction
                             ? "text-cyan-300 drop-shadow-[0_0_28px_rgba(0,212,255,0.85)] multiplier-pop"
-                            : "text-blue-400/60"
+                            : "text-blue-400/70"
                         }`}
                       >
                         {lockedPrediction
                           ? `${lockedPrediction.crashPoint.toFixed(2)}x`
-                          : "--.--x"}
+                          : "0.00x"}
                       </div>
 
                       <span className="text-[11px] font-mono text-slate-300 tabular-nums">
                         {lockedPrediction
                           ? livePhase === "waiting"
                             ? "الحالة: انتظار الإقلاع — التوقع جاهز 100%"
-                            : livePhase === "flight"
-                              ? "الحالة: طيران — التوقع مقفل حتى انتهاء الجولة"
-                              : "الحالة: انتهت الجولة — بانتظار الجولة الجديدة"
-                          : "جاري الاتصال بالنسخة وجلب التوقع تلقائياً..."}
+                            : "الحالة: الجولة شغالة — انتظر الجولة تخلص"
+                          : 'اضغط "ابدأ الدور" لجلب توقع الجولة الحالية'}
                       </span>
                     </div>
+                  </div>
+                )}
+
+                {/* Manual Start Round Button */}
+                {!dbClosed && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      id="aviatorStartRoundBtn"
+                      onClick={handleStartRound}
+                      disabled={isFetchingRound}
+                      className="btn-blue w-full py-3.5 px-4 rounded-xl text-white font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl active:scale-95 cursor-pointer disabled:opacity-60"
+                    >
+                      <i
+                        className={`fa-solid ${
+                          isFetchingRound
+                            ? "fa-circle-notch fa-spin"
+                            : lockedPrediction
+                              ? "fa-hourglass-half"
+                              : "fa-play"
+                        } text-cyan-300 text-sm`}
+                      />
+                      <span>
+                        {isFetchingRound
+                          ? "جاري جلب التوقع..."
+                          : "ابدأ الدور"}
+                      </span>
+                    </button>
                   </div>
                 )}
 
