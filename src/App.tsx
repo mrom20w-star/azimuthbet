@@ -180,19 +180,121 @@ export default function App() {
       }
     };
 
-    // Check if root `crash` node itself is `false` via shallow REST check
-    const checkCrashRootOpen = async () => {
-      try {
-        const res = await fetch(`${CRASH_DB_URL}/crash.json?shallow=true`, {
-          cache: "no-store",
+    const handleCurrentSnapshotData = (raw: unknown) => {
+      if (raw === false) {
+        rootClosed = true;
+        syncClosedState("قاعدة البيانات مغلقة حالياً");
+        return;
+      }
+
+      if (dbClosedRef.current) return;
+      if (!raw || typeof raw !== "object") return;
+
+      const data = raw as Partial<CrashCurrentData>;
+      const roundNumber =
+        typeof data.roundNumber === "number" ? data.roundNumber : null;
+      const phase =
+        data.phase === "waiting" ||
+        data.phase === "flight" ||
+        data.phase === "crashed"
+          ? data.phase
+          : null;
+      const crashPoint =
+        typeof data.crashPoint === "number" ? data.crashPoint : null;
+
+      if (phase) setLivePhase(phase);
+      if (roundNumber !== null) setLiveRoundNumber(roundNumber);
+
+      // 1) Initial entry: if the platform already has an active or recent round,
+      //    display its prediction immediately on entry without waiting.
+      if (
+        lastShownRoundRef.current === null &&
+        roundNumber !== null &&
+        crashPoint !== null &&
+        crashPoint >= 1 &&
+        (phase === "waiting" || phase === "flight" || phase === "crashed")
+      ) {
+        lastShownRoundRef.current = roundNumber;
+        setLockedPrediction({
+          roundNumber,
+          crashPoint,
         });
-        if (res.status === 401 || res.status === 403) {
+        if (phase === "crashed") {
+          setCompletedRounds((prev) => {
+            if (prev.some((r) => r.roundNumber === roundNumber)) return prev;
+            return [{ roundNumber, crashPoint }, ...prev.slice(0, 7)];
+          });
+        }
+        return;
+      }
+
+      // 2) Subsequent rounds: STRICT RULE
+      //    Only update when phase === "waiting", new larger roundNumber, and crashPoint >= 1.
+      if (
+        phase === "waiting" &&
+        roundNumber !== null &&
+        roundNumber !== lastShownRoundRef.current &&
+        (lastShownRoundRef.current === null ||
+          roundNumber > lastShownRoundRef.current) &&
+        crashPoint !== null &&
+        crashPoint >= 1
+      ) {
+        lastShownRoundRef.current = roundNumber;
+        setLockedPrediction({
+          roundNumber,
+          crashPoint,
+        });
+      } else if (phase === "crashed" && roundNumber !== null) {
+        // Record completed round ONLY if it matches the round we locked & displayed
+        if (roundNumber === lastShownRoundRef.current) {
+          setLockedPrediction((currentLocked) => {
+            if (currentLocked && currentLocked.roundNumber === roundNumber) {
+              setCompletedRounds((prev) => {
+                if (prev.some((r) => r.roundNumber === roundNumber)) {
+                  return prev;
+                }
+                return [
+                  {
+                    roundNumber,
+                    crashPoint: currentLocked.crashPoint,
+                  },
+                  ...prev.slice(0, 7),
+                ];
+              });
+            }
+            return currentLocked;
+          });
+        }
+      }
+      // During "flight" and "crashed", prediction remains completely locked
+      // and no next-round prediction is ever read or shown.
+    };
+
+    // Fast initial REST bootstrap for instant readout on entry + root closure check
+    const bootstrapFromRest = async () => {
+      try {
+        const [shallowRes, currentRes] = await Promise.all([
+          fetch(`${CRASH_DB_URL}/crash.json?shallow=true`, {
+            cache: "no-store",
+          }),
+          fetch(`${CRASH_DB_URL}/crash/current.json`, {
+            cache: "no-store",
+          }),
+        ]);
+
+        if (
+          shallowRes.status === 401 ||
+          shallowRes.status === 403 ||
+          currentRes.status === 401 ||
+          currentRes.status === 403
+        ) {
           permissionClosed = true;
           syncClosedState("قاعدة البيانات مغلقة (صلاحية الوصول مرفوضة)");
           return;
         }
-        if (res.ok) {
-          const val = await res.json();
+
+        if (shallowRes.ok) {
+          const val = await shallowRes.json();
           if (val === false) {
             rootClosed = true;
             syncClosedState("قاعدة البيانات مغلقة حالياً من الإدارة");
@@ -201,12 +303,17 @@ export default function App() {
           rootClosed = false;
           syncClosedState();
         }
+
+        if (currentRes.ok) {
+          const currentData = await currentRes.json();
+          handleCurrentSnapshotData(currentData);
+        }
       } catch {
         // Ignore transient network check errors; onValue handles live state
       }
     };
 
-    void checkCrashRootOpen();
+    void bootstrapFromRest();
 
     const unsubEnabled = onValue(
       enabledRef,
@@ -239,77 +346,14 @@ export default function App() {
       currentRef,
       (snapshot) => {
         const raw = snapshot.val();
-        if (raw === false) {
-          rootClosed = true;
-          syncClosedState("قاعدة البيانات مغلقة حالياً");
-          return;
-        }
-
-        if (dbClosedRef.current) return;
-
         if (!raw || typeof raw !== "object") {
-          void checkCrashRootOpen();
+          if (raw === false) {
+            rootClosed = true;
+            syncClosedState("قاعدة البيانات مغلقة حالياً");
+          }
           return;
         }
-
-        const data = raw as Partial<CrashCurrentData>;
-        const roundNumber =
-          typeof data.roundNumber === "number" ? data.roundNumber : null;
-        const phase =
-          data.phase === "waiting" ||
-          data.phase === "flight" ||
-          data.phase === "crashed"
-            ? data.phase
-            : null;
-        const crashPoint =
-          typeof data.crashPoint === "number" ? data.crashPoint : null;
-
-        if (phase) setLivePhase(phase);
-        if (roundNumber !== null) setLiveRoundNumber(roundNumber);
-
-        // STRICT RULE:
-        // Never show or update prediction unless ALL conditions hold:
-        // 1) data.phase === "waiting"
-        // 2) data.roundNumber !== lastShownRound (and greater if already set)
-        // 3) data.crashPoint >= 1
-        if (
-          phase === "waiting" &&
-          roundNumber !== null &&
-          roundNumber !== lastShownRoundRef.current &&
-          (lastShownRoundRef.current === null ||
-            roundNumber > lastShownRoundRef.current) &&
-          crashPoint !== null &&
-          crashPoint >= 1
-        ) {
-          lastShownRoundRef.current = roundNumber;
-          setLockedPrediction({
-            roundNumber,
-            crashPoint,
-          });
-        } else if (phase === "crashed" && roundNumber !== null) {
-          // Record completed round ONLY if it matches the round we locked & displayed
-          if (roundNumber === lastShownRoundRef.current) {
-            setLockedPrediction((currentLocked) => {
-              if (currentLocked && currentLocked.roundNumber === roundNumber) {
-                setCompletedRounds((prev) => {
-                  if (prev.some((r) => r.roundNumber === roundNumber)) {
-                    return prev;
-                  }
-                  return [
-                    {
-                      roundNumber,
-                      crashPoint: currentLocked.crashPoint,
-                    },
-                    ...prev.slice(0, 7),
-                  ];
-                });
-              }
-              return currentLocked;
-            });
-          }
-        }
-        // During "flight" and "crashed", prediction remains completely locked
-        // and no next-round prediction is ever read or shown.
+        handleCurrentSnapshotData(raw);
       },
       (err) => {
         const msg = String(err?.message || "");
@@ -432,13 +476,7 @@ export default function App() {
       return dbErrorMsg || "قاعدة البيانات مغلقة — التوقعات متوقفة";
     }
     if (!lockedPrediction) {
-      if (livePhase === "flight") {
-        return "الطائرة في الجو الآن — انتظار انتهاء الجولة لظهور التوقع...";
-      }
-      if (livePhase === "crashed") {
-        return "انتهت الجولة — بانتظار بدء الجولة الجديدة...";
-      }
-      return "جاري المزامنة اللحظية مع السيرفر...";
+      return "جاري جلب التوقع المباشر من النسخة...";
     }
     if (livePhase === "waiting") {
       return `الجولة #${lockedPrediction.roundNumber}: توقع مؤكد قبل الإقلاع ✈️`;
@@ -983,7 +1021,7 @@ export default function App() {
                         <span>
                           {lockedPrediction
                             ? "نقطة الانفجار المؤكدة للجولة"
-                            : "انتظار بداية الجولة القادمة..."}
+                            : "جاري جلب التوقع المباشر..."}
                         </span>
                       </div>
 
@@ -1005,13 +1043,13 @@ export default function App() {
                       </div>
 
                       <span className="text-[11px] font-mono text-slate-300 tabular-nums">
-                        {!lockedPrediction
-                          ? "لا يُعرض التوقع إلا عند بدء مرحلة الانتظار (waiting)"
-                          : livePhase === "waiting"
+                        {lockedPrediction
+                          ? livePhase === "waiting"
                             ? "الحالة: انتظار الإقلاع — التوقع جاهز 100%"
                             : livePhase === "flight"
                               ? "الحالة: طيران — التوقع مقفل حتى انتهاء الجولة"
-                              : "الحالة: انتهت الجولة — بانتظار الجولة الجديدة"}
+                              : "الحالة: انتهت الجولة — بانتظار الجولة الجديدة"
+                          : "جاري الاتصال بالنسخة وجلب التوقع تلقائياً..."}
                       </span>
                     </div>
                   </div>
